@@ -49,42 +49,63 @@ function isRateLimited(identifier: string): boolean {
 
 export async function POST(request: Request) {
   try {
-    const headersList = await headers();
-    const forwardedFor = headersList.get('x-forwarded-for');
-    const clientIp = forwardedFor ? forwardedFor.split(',')[0] : 'unknown';
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'chrome-extension://fbccmojojimhddodpjmohpodhaghojbg'
+    ];
+    const origin = request.headers.get('origin');
     
-    if (isRateLimited(clientIp)) {
-      const store = getRateLimitInfo(clientIp);
-      const resetIn = Math.ceil((store.resetTime - Date.now()) / 1000);
+    if (origin && allowedOrigins.includes(origin)) {
+      const responseHeaders = {
+        'Access-Control-Allow-Origin': origin,
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Credentials': 'true',
+      };
+
+      if (request.method === 'OPTIONS') {
+        return new NextResponse(null, { 
+          status: 200,
+          headers: responseHeaders
+        });
+      }
+
+      const headersList = await headers();
+      const forwardedFor = headersList.get('x-forwarded-for');
+      const clientIp = forwardedFor ? forwardedFor.split(',')[0] : 'unknown';
       
-      return NextResponse.json(
-        { 
-          error: 'Rate limit exceeded',
-          message: `Too many requests. Please try again in ${resetIn} seconds.`
-        },
-        { 
-          status: 429,
-          headers: {
-            'X-RateLimit-Limit': CONFIG.RATE_LIMIT.MAX_REQUESTS.toString(),
-            'X-RateLimit-Remaining': '0',
-            'X-RateLimit-Reset': store.resetTime.toString(),
+      if (isRateLimited(clientIp)) {
+        const store = getRateLimitInfo(clientIp);
+        const resetIn = Math.ceil((store.resetTime - Date.now()) / 1000);
+        
+        return NextResponse.json(
+          { 
+            error: 'Rate limit exceeded',
+            message: `Too many requests. Please try again in ${resetIn} seconds.`
+          },
+          { 
+            status: 429,
+            headers: {
+              'X-RateLimit-Limit': CONFIG.RATE_LIMIT.MAX_REQUESTS.toString(),
+              'X-RateLimit-Remaining': '0',
+              'X-RateLimit-Reset': store.resetTime.toString(),
+            }
           }
-        }
-      );
-    }
+        );
+      }
 
-    const { description, language }: { description: string, language: string } = await request.json();
+      const { description, language }: { description: string, language: string } = await request.json();
 
-    if (!description || !language) {
-      return NextResponse.json(
-        { error: 'Description and language are required' },
-        { status: 400 }
-      );
-    }
+      if (!description || !language) {
+        return NextResponse.json(
+          { error: 'Description and language are required' },
+          { status: 400 }
+        );
+      }
 
-  const systemMessage = {
-      role: "system",
-      content: `
+      const systemMessage = {
+        role: "system",
+        content: `
     You are a YouTube SEO expert specializing in generating highly effective keywords for videos. Follow these rules to create an optimized keyword list:
     
     CRITICAL INSTRUCTION:
@@ -119,54 +140,60 @@ export async function POST(request: Request) {
     - Return keywords as a comma-separated list, no additional text.
     - Example: palabra-clave-principal, pregunta-relevante-1, palabra-específica-1, término-relacionado-1, término-de-marca
     `
-    };
+      };
 
-    const userMessage = {
-      role: "user",
-      content: `Generate an optimized list of YouTube keywords in ${language} for the following video description: "${description}". Ensure the output adheres to the character count limit and all specified keyword guidelines.`
-    };
+      const userMessage = {
+        role: "user",
+        content: `Generate an optimized list of YouTube keywords in ${language} for the following video description: "${description}". Ensure the output adheres to the character count limit and all specified keyword guidelines.`
+      };
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [systemMessage, userMessage],
-        temperature: 0.3,
-        max_tokens: 550,
-        presence_penalty: 0.5,
-        frequency_penalty: 0.4,
-      })
-    });
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${OPENAI_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [systemMessage, userMessage],
+          temperature: 0.3,
+          max_tokens: 550,
+          presence_penalty: 0.5,
+          frequency_penalty: 0.4,
+        })
+      });
 
-    if (!response.ok) {
-      console.log(response);
-      throw new Error('OpenAI API request failed');
+      if (!response.ok) {
+        console.log(response);
+        throw new Error('OpenAI API request failed');
+      }
+
+      const data = await response.json();
+
+      if (!data.choices?.[0]?.message?.content) {
+        throw new Error('Invalid API response format');
+      }
+
+      const store = getRateLimitInfo(clientIp);
+      const remaining = CONFIG.RATE_LIMIT.MAX_REQUESTS - store.count;
+
+      return NextResponse.json(
+        { keywords: data.choices[0].message.content },
+        {
+          headers: {
+            ...responseHeaders,
+            'X-RateLimit-Limit': CONFIG.RATE_LIMIT.MAX_REQUESTS.toString(),
+            'X-RateLimit-Remaining': remaining.toString(),
+            'X-RateLimit-Reset': store.resetTime.toString(),
+          }
+        }
+      );
     }
-
-    const data = await response.json();
-
-    if (!data.choices?.[0]?.message?.content) {
-      throw new Error('Invalid API response format');
-    }
-
-    const store = getRateLimitInfo(clientIp);
-    const remaining = CONFIG.RATE_LIMIT.MAX_REQUESTS - store.count;
 
     return NextResponse.json(
-      { keywords: data.choices[0].message.content },
-      {
-        headers: {
-          'X-RateLimit-Limit': CONFIG.RATE_LIMIT.MAX_REQUESTS.toString(),
-          'X-RateLimit-Remaining': remaining.toString(),
-          'X-RateLimit-Reset': store.resetTime.toString(),
-        }
-      }
+      { error: 'Origin not allowed' },
+      { status: 403 }
     );
-
   } catch (error) {
     console.error('Error generating keywords:', error);
     return NextResponse.json(
