@@ -47,10 +47,31 @@ function isRateLimited(identifier: string): boolean {
   return false;
 }
 
+export async function OPTIONS(request: Request) {
+  const origin = request.headers.get('origin');
+  const allowedOrigins = [
+    'chrome-extension://fbccmojojimhddodpjmohpodhaghojbg'
+  ];
+
+  if (origin && allowedOrigins.includes(origin)) {
+    return new NextResponse(null, {
+      status: 200,
+      headers: {
+        'Access-Control-Allow-Origin': origin,
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Credentials': 'true',
+      },
+    });
+  }
+
+  return new NextResponse(null, { status: 403 });
+}
+
 export async function POST(request: Request) {
   try {
     const allowedOrigins = [
-      'http://localhost:3000',
+      'http://localhost:8080',
       'chrome-extension://fbccmojojimhddodpjmohpodhaghojbg'
     ];
     const origin = request.headers.get('origin');
@@ -62,13 +83,6 @@ export async function POST(request: Request) {
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         'Access-Control-Allow-Credentials': 'true',
       };
-
-      if (request.method === 'OPTIONS') {
-        return new NextResponse(null, { 
-          status: 200,
-          headers: responseHeaders
-        });
-      }
 
       const headersList = await headers();
       const forwardedFor = headersList.get('x-forwarded-for');
