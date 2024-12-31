@@ -1,8 +1,8 @@
 "use client";
 
-import React, { createContext, useContext, useState } from 'react';
-import { showNotification } from '@/components/Notification';
 import { LANGUAGES } from '@/components/LanguageSelector';
+import { showNotification } from '@/components/Notification';
+import React, { createContext, useContext, useState } from 'react';
 
 interface KeywordsContextType {
   keywords: string[];
@@ -66,6 +66,10 @@ export function KeywordsProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (!response.ok) {
+        const errorData = await response.json();
+        if (response.status === 429) {
+          throw new Error(errorData.message || 'Too many requests. Please try again later.');
+        }
         throw new Error('Failed to generate keywords');
       }
 

@@ -1,9 +1,78 @@
+import { CONFIG } from '@/config/config';
+import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
+type RateLimitStore = {
+  count: number;
+  resetTime: number;
+};
+
+const rateLimitStore = new Map<string, RateLimitStore>();
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of rateLimitStore.entries()) {
+    if (value.resetTime < now) {
+      rateLimitStore.delete(key);
+    }
+  }
+}, CONFIG.RATE_LIMIT.CLEANUP_INTERVAL);
+
+function getRateLimitInfo(identifier: string): RateLimitStore {
+  const now = Date.now();
+  const store = rateLimitStore.get(identifier);
+
+  if (!store || store.resetTime < now) {
+    const newStore: RateLimitStore = {
+      count: 0,
+      resetTime: now + CONFIG.RATE_LIMIT.WINDOW
+    };
+    rateLimitStore.set(identifier, newStore);
+    return newStore;
+  }
+
+  return store;
+}
+
+function isRateLimited(identifier: string): boolean {
+  const store = getRateLimitInfo(identifier);
+  
+  if (store.count >= CONFIG.RATE_LIMIT.MAX_REQUESTS) {
+    return true;
+  }
+
+  store.count++;
+  return false;
+}
+
 export async function POST(request: Request) {
   try {
+    const headersList = await headers();
+    const forwardedFor = headersList.get('x-forwarded-for');
+    const clientIp = forwardedFor ? forwardedFor.split(',')[0] : 'unknown';
+    
+    if (isRateLimited(clientIp)) {
+      const store = getRateLimitInfo(clientIp);
+      const resetIn = Math.ceil((store.resetTime - Date.now()) / 1000);
+      
+      return NextResponse.json(
+        { 
+          error: 'Rate limit exceeded',
+          message: `Too many requests. Please try again in ${resetIn} seconds.`
+        },
+        { 
+          status: 429,
+          headers: {
+            'X-RateLimit-Limit': CONFIG.RATE_LIMIT.MAX_REQUESTS.toString(),
+            'X-RateLimit-Remaining': '0',
+            'X-RateLimit-Reset': store.resetTime.toString(),
+          }
+        }
+      );
+    }
+
     const { description, language }: { description: string, language: string } = await request.json();
 
     if (!description || !language) {
@@ -84,7 +153,19 @@ export async function POST(request: Request) {
       throw new Error('Invalid API response format');
     }
 
-    return NextResponse.json({ keywords: data.choices[0].message.content });
+    const store = getRateLimitInfo(clientIp);
+    const remaining = CONFIG.RATE_LIMIT.MAX_REQUESTS - store.count;
+
+    return NextResponse.json(
+      { keywords: data.choices[0].message.content },
+      {
+        headers: {
+          'X-RateLimit-Limit': CONFIG.RATE_LIMIT.MAX_REQUESTS.toString(),
+          'X-RateLimit-Remaining': remaining.toString(),
+          'X-RateLimit-Reset': store.resetTime.toString(),
+        }
+      }
+    );
 
   } catch (error) {
     console.error('Error generating keywords:', error);
