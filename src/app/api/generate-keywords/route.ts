@@ -50,7 +50,7 @@ function isRateLimited(identifier: string): boolean {
 export async function OPTIONS(request: Request) {
   const origin = request.headers.get('origin');
   const allowedOrigins = [
-    'chrome-extension://fbccmojojimhddodpjmohpodhaghojbg',
+    'chrome-extension://cphofokfdihlkdmjgonmdmmdddfpgbmd',
     'https://yt-kaiwords-generator.jesuslagares.com'
   ];
 
@@ -73,7 +73,7 @@ export async function POST(request: Request) {
   try {
     const allowedOrigins = [
       'http://localhost:8080',
-      'chrome-extension://fbccmojojimhddodpjmohpodhaghojbg',
+      'chrome-extension://cphofokfdihlkdmjgonmdmmdddfpgbmd',
       'https://yt-kaiwords-generator.jesuslagares.com'
     ];
     const origin = request.headers.get('origin');
